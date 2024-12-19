@@ -7,6 +7,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/pgtype"
@@ -41,13 +44,16 @@ func (s *ScheduleServer) Start() error {
 	s.httpServer = &http.Server{
 		Addr: s.serverPort,
 	}
-	err = s.httpServer.ListenAndServe()
 
-	if err != nil {
-		return err
-	}
+	go func() {
+		err = s.httpServer.ListenAndServe()
 
-	return nil
+		if err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server error: %s\n", err)
+		}
+	}()
+
+	return s.awaitShutdown()
 
 }
 
@@ -196,6 +202,27 @@ func (s *ScheduleServer) createTask(ctx context.Context, task Task) (string, err
 	}
 
 	return insertId, nil
+}
+
+func (s *ScheduleServer) awaitShutdown() error {
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	<-stop
+
+	return s.Stop()
+}
+
+func (s *ScheduleServer) Stop() error {
+	s.dbPool.Close()
+
+	if s.httpServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return s.httpServer.Shutdown(ctx)
+	}
+	log.Println("Scheduler server and database pool stopped")
+	return nil
+
 }
 
 func main() {
