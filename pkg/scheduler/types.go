@@ -43,3 +43,9 @@ type TaskScheduleRequest struct {
 	Command     string `json:"command"`
 	ScheduledAt string `json:"scheduled_at"`
 }
+
+type TaskScheduleReponse struct {
+	Command     string `json:"command"`
+	ScheduledAt int64  `json:"scheduled_at"`
+	TaskId      string `json:"task_id"`
+}
