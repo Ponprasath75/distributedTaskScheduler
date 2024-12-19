@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/pgtype"
 	"github.com/jackc/pgx/v4/pgxpool"
 )
 
@@ -136,16 +137,65 @@ func (s *ScheduleServer) handleScheduleTask(res http.ResponseWriter, req *http.R
 	}
 
 	scheduledTime, err := time.Parse(time.RFC3339, scheduleTaskRequest.ScheduledAt)
+	log.Println(scheduledTime)
 
 	if err != nil {
 		log.Println(err)
 		http.Error(res, "Invalid date format. Use ISO 8601 format.", http.StatusBadRequest)
+		return
+	}
+
+	if time.Now().Compare(scheduledTime) >= 0 {
+		log.Println("Schdeule time coincides or in the past")
+		http.Error(res, "Schdeule time can't be in the past.", http.StatusBadRequest)
+		return
 	}
 
 	unixTimestamp := time.Unix(scheduledTime.Unix(), 0)
 
-	fmt.Println(scheduleTaskRequest)
+	pgTimeStamp := pgtype.Timestamp{
+		Time: unixTimestamp,
+	}
 
+	log.Println("unixTimestamp", unixTimestamp)
+
+	taskId, err := s.createTask(context.Background(), Task{Command: scheduleTaskRequest.Command, ScheduledAt: pgTimeStamp})
+
+	if err != nil {
+		log.Println(err)
+		http.Error(res, fmt.Sprintf("Failed to submit task. Error: %s", err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	taskResponseData := TaskScheduleReponse{
+		Command:     scheduleTaskRequest.Command,
+		ScheduledAt: unixTimestamp.Unix(),
+		TaskId:      taskId,
+	}
+
+	jsonResponse, err := json.Marshal(taskResponseData)
+
+	if err != nil {
+		log.Println(err)
+		http.Error(res, "Unable to create Task.", http.StatusInternalServerError)
+		return
+	}
+
+	res.Header().Set("Content-Type", "application/json")
+
+	res.Write(jsonResponse)
+
+}
+
+func (s *ScheduleServer) createTask(ctx context.Context, task Task) (string, error) {
+	var insertId string
+	err := s.dbPool.QueryRow(ctx, "INSERT INTO TASKS (command,scheduled_at) VALUES ($1,$2) RETURNING id", task.Command, task.ScheduledAt.Time).Scan(&insertId)
+
+	if err != nil {
+		return "", err
+	}
+
+	return insertId, nil
 }
 
 func main() {
